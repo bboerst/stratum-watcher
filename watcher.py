@@ -167,46 +167,18 @@ class Watcher(Process):
                 block_ver = int.from_bytes(
                     bytes.fromhex(block_ver_hex), byteorder="big"
                 )
-                if block_ver & (1 << 2):
-                    if self.signals is None:
-                        LOG.info(
-                            f"✅ Signaling initially: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    elif not self.signals:
-                        LOG.info(
-                            f"✅ Now signaling: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    elif time.time() - self.last_log_time > 300:
-                        LOG.info(
-                            f"✅ Still signaling: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    LOG.debug(
-                        f"Issued new work that SIGNALS ✅ for Taproot from {self.purl.hostname}:{self.purl.port}"
-                    )
-                    self.signals = True
-                else:
-                    if self.signals is None:
-                        LOG.info(
-                            f"❌ Not signaling initially: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    elif self.signals:
-                        LOG.info(
-                            f"❌ Stopped signaling: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    elif time.time() - self.last_log_time > 300:
-                        LOG.info(
-                            f"❌ Still not signaling: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    LOG.debug(
-                        f"Issued new work that DOES NOT SIGNAL ❌ for Taproot from {self.purl.hostname}:{self.purl.port}"
-                    )
-                    self.signals = False
+                LOG.info(
+                    f"{self.purl.hostname}:{self.purl.port} previous block hash: {prev_bh}"
+                )
+                LOG.info(
+                    f"{self.purl.hostname}:{self.purl.port} hash() of merkle leafs: {sum(hash(leaf) for leaf in n['params'][4])}"
+                )
+                LOG.info(
+                    f"{self.purl.hostname}:{self.purl.port} hash() of coinbase part 1: {n['params'][2]}"
+                )
+                LOG.info(
+                    f"{self.purl.hostname}:{self.purl.port} hash() of coinbase part 2: {n['params'][3]}"
+                )
 
     def run(self):
         # If there is a socket exception, retry
