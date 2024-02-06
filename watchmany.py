@@ -7,6 +7,9 @@ from watcher import Watcher
 
 POOLS = [
     ["stratum+tcp://stratum.slushpool.com:3333", "achow101.worker1:pass"],
+    ["stratum+tcp://btc.viabtc.io:25", "watcher.worker1:pass" ],
+    ["stratum+tcp://btc.viabtc.io:443", "watcher.worker1:pass"],
+    ["stratum+tcp://btc.viabtc.com:3333", "watcher.001:123"],
     ["stratum+tcp://eu.stratum.slushpool.com:3333", "achow101.worker1:pass"],
     ["stratum+tcp://us-east.stratum.slushpool.com:3333", "achow101.worker1:pass"],
     ["stratum+tcp://ca.stratum.slushpool.com:3333", "achow101.worker1:pass"],
@@ -20,8 +23,6 @@ POOLS = [
     ["stratum+tcp://stratum.1thash.btc.top:8888", "achow102.wentaproot:wentaproot"],
     ["stratum+tcp://bak.1thash.btc.top:3333", "achow102.wentaproot:wentaproot"],
     ["stratum+tcp://us.ss.btc.com:1800", "achow101.wentaproot:wentaproot"],
-    ["stratum+tcp://cn.ss.btc.com:1800", "achow101cn.wentaproot:wentaproot"],
-    ["stratum+tcp://sz.ss.btc.com:1800", "achow101sz.wentaproot:wentaproot"],
     ["stratum+tcp://eu.ss.btc.com:1800", "achow101eu.wentaproot:wentaproot"],
     ["stratum+tcp://ss.antpool.com:3333", "achow101.wentaproot:wentaproot"],
     ["stratum+tcp://stratum.kano.is:3333", "achow101.wentaproot:x"],
@@ -85,16 +86,6 @@ POOLS = [
     ["stratum+tcp://us.emcd.io:3333", "achow101.wentaproot:x"],
     ["stratum+tcp://ir.emcd.io:3333", "achow101.wentaproot:x"],
     ["stratum+tcp://kz.emcd.io:3333", "achow101.wentaproot:x"],
-    ["stratum+tcp://hb.ss.rawpool.com:443", "miner1.wentaproot:x"],
-    ["stratum+tcp://hb.ss.rawpool.com:1800", "miner1.wentaproot:x"],
-    ["stratum+tcp://hn.ss.rawpool.com:443", "miner1.wentaproot:x"],
-    ["stratum+tcp://hn.ss.rawpool.com:1800", "miner1.wentaproot:x"],
-    ["stratum+tcp://us.ss.rawpool.com:443", "miner1.wentaproot:x"],
-    ["stratum+tcp://us.ss.rawpool.com:1800", "miner1.wentaproot:x"],
-    ["stratum+tcp://eu.ss.rawpool.com:443", "miner1.wentaproot:x"],
-    ["stratum+tcp://eu.ss.rawpool.com:1800", "miner1.wentaproot:x"],
-    ["stratum+tcp://ru.ss.rawpool.com:443", "miner1.wentaproot:x"],
-    ["stratum+tcp://ru.ss.rawpool.com:1800", "miner1.wentaproot:x"],
 ]
 
 parser = argparse.ArgumentParser(
