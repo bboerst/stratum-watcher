@@ -26,7 +26,7 @@ LOG.setLevel(logging.INFO)
 
 
 class Watcher(Process):
-    def __init__(self, url, userpass, rpccookiefile, *args, **kwargs):
+    def __init__(self, url, userpass, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.buf = b""
         self.id = 0
@@ -46,15 +46,6 @@ class Watcher(Process):
             raise ValueError(f"No port provided")
         if self.purl.path != "":
             raise ValueError(f"URL has a path {self.purl.path}, this is not valid")
-
-        # Get the RPC cookie
-        cookie_filepath = os.path.abspath(os.path.expanduser(rpccookiefile))
-        with open(cookie_filepath, "r") as f:
-            self.rpc_userpass = f.readline()
-
-        # Open RPC connection
-        self.rpc = AuthServiceProxy(f"http://{self.rpc_userpass}@localhost:8332")
-        self.last_seen_blockhash = self.rpc.getbestblockhash()
 
         self.init_socket()
 
@@ -76,8 +67,8 @@ class Watcher(Process):
             split_buf = self.buf.split(b"\n", maxsplit=1)
             r = split_buf[0]
             try:
+                #print(r)
                 resp = json.loads(r)
-
                 # Remove r from the buffer
                 if len(split_buf) == 2:
                     self.buf = split_buf[1]
@@ -86,6 +77,11 @@ class Watcher(Process):
 
                 # Decoded, so return this message
                 return resp
+            except UnicodeDecodeError:
+                new_buf = self.sock.recv(4096)
+                if len(new_buf) == 0:
+                    raise EOFError("Socket EOF received")
+                self.buf += new_buf
             except json.JSONDecodeError:
                 # Failed to decode, maybe missing, so try to get more
                 new_buf = self.sock.recv(4096)
@@ -151,63 +147,20 @@ class Watcher(Process):
                     prev_bh_stratum[1],
                     prev_bh_stratum[0],
                 ).hex()
-
-                # Check that this is Bitcoin
-                if prev_bh != self.last_seen_blockhash:
-                    # If the blockhash doesn't match what we've cached, ask bitcoind
-                    try:
-                        self.rpc.getblockheader(prev_bh)
-                        self.last_seen_blockhash = prev_bh
-                    except JSONRPCException:
-                        LOG.debug(f"Received non-Bitcoin work, ignoring")
-                        continue
-
-                # Check for taproot versionbits
                 block_ver_hex = n["params"][5]
                 block_ver = int.from_bytes(
                     bytes.fromhex(block_ver_hex), byteorder="big"
                 )
-                if block_ver & (1 << 2):
-                    if self.signals is None:
-                        LOG.info(
-                            f"✅ Signaling initially: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    elif not self.signals:
-                        LOG.info(
-                            f"✅ Now signaling: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    elif time.time() - self.last_log_time > 300:
-                        LOG.info(
-                            f"✅ Still signaling: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    LOG.debug(
-                        f"Issued new work that SIGNALS ✅ for Taproot from {self.purl.hostname}:{self.purl.port}"
-                    )
-                    self.signals = True
-                else:
-                    if self.signals is None:
-                        LOG.info(
-                            f"❌ Not signaling initially: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    elif self.signals:
-                        LOG.info(
-                            f"❌ Stopped signaling: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    elif time.time() - self.last_log_time > 300:
-                        LOG.info(
-                            f"❌ Still not signaling: {self.purl.hostname}:{self.purl.port}"
-                        )
-                        self.last_log_time = time.time()
-                    LOG.debug(
-                        f"Issued new work that DOES NOT SIGNAL ❌ for Taproot from {self.purl.hostname}:{self.purl.port}"
-                    )
-                    self.signals = False
-
+                coinbase_part1 = n["params"][2]
+                coinbase_part2 = n["params"][3]
+                merkle_leaves = n["params"][4]
+                
+                nBits = n["params"][6]
+                nTime = n["params"][7]
+                clear_jobs = n["params"][8]
+                LOG.info(f"New work from {self.purl.hostname: >25}:{self.purl.port: <5} {len(merkle_leaves)} {hash(tuple(merkle_leaves))}")
+                
+                
     def run(self):
         # If there is a socket exception, retry
         while True:
@@ -229,11 +182,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--debug", help="Verbose debug logging", action="store_true")
     parser.add_argument("--logfile", help="Log file to log to")
-    parser.add_argument(
-        "--rpccookiefile",
-        help="Cookie file for Bitcoin Core RPC creds",
-        default="~/.bitcoin/.cookie",
-    )
     args = parser.parse_args()
 
     # Set logging level
@@ -248,7 +196,7 @@ if __name__ == "__main__":
 
     try:
         while True:
-            w = Watcher(args.url, args.userpass, args.rpccookiefile)
+            w = Watcher(args.url, args.userpass)
             atexit.register(w.close)
             w.get_stratum_work()
             atexit.unregister(w.close)
