@@ -14,6 +14,8 @@ from authproxy import AuthServiceProxy, JSONRPCException
 from multiprocessing import Process
 from urllib.parse import urlparse, urlunparse
 
+from pycoin.symbols.btc import network
+
 # Setup logging
 file_handler = logging.FileHandler(filename="stratum-watcher.log")
 stdout_handler = logging.StreamHandler(sys.stdout)
@@ -32,7 +34,10 @@ class Watcher(Process):
         self.id = 1
         self.poolname = poolname
         self.userpass = userpass
+        self.extranonce1 = None
+        self.extranonce2_length = -1
         self.last_log_time = time.time()
+        self.socket_open_time = None
         self.pipe_send = pipe_send
         # Parse the URL
         self.purl = urlparse(url)
@@ -53,6 +58,7 @@ class Watcher(Process):
         # Make the socket
         self.sock = socket.socket()
         self.sock.settimeout(600)
+        self.socket_open_time = time.time()
 
     def close(self):
         try:
@@ -61,13 +67,13 @@ class Watcher(Process):
             pass
         self.sock.close()
         LOG.info(f"Disconnected from {urlunparse(self.purl)}")
+        self.pipe_send.send({"name": self.poolname, "close": True})
 
     def get_msg(self):
         while True:
             split_buf = self.buf.split(b"\n", maxsplit=1)
             r = split_buf[0]
             try:
-                print(self.poolname, self.buf.decode())
                 resp = json.loads(r)
                 # Remove r from the buffer
                 if len(split_buf) == 2:
@@ -77,16 +83,16 @@ class Watcher(Process):
 
                 # Decoded, so return this message
                 return resp
-            except UnicodeDecodeError:
-                new_buf = self.sock.recv(4096)
-                if len(new_buf) == 0:
-                    raise EOFError("Socket EOF received")
-                self.buf += new_buf
-            except json.JSONDecodeError:
+            except (json.decoder.JSONDecodeError, ConnectionResetError):
                 # Failed to decode, maybe missing, so try to get more
-                new_buf = self.sock.recv(4096)
+                new_buf = b""
+                try:
+                    new_buf = self.sock.recv(4096)
+                except:
+                    self.close()
+                    raise EOFError
                 if len(new_buf) == 0:
-                    raise EOFError("Socket EOF received")
+                    self.close()
                 self.buf += new_buf
 
     def send_jsonrpc(self, method, params):
@@ -100,26 +106,28 @@ class Watcher(Process):
         self.id += 1
 
         # Send the jsonrpc request
-        LOG.info(f"Sending: {data}")
+        LOG.debug(f"Sending: {data}")
         json_data = json.dumps(data) + "\n"
         self.sock.send(json_data.encode())
 
         # Get the jsonrpc reqponse
         resp = self.get_msg()
-        LOG.info(f"Received: {resp}")
+        if "id" in resp and resp["id"] == 1 and "result" in resp:
+            self.extranonce1, self.extranonce2_length = resp["result"][-2:]
+        LOG.debug(f"Received: {resp}")
 
     def get_stratum_work(self):
         # Open TCP connection to the server
         self.sock.connect((self.purl.hostname, self.purl.port))
-        LOG.info(f"Connected to server {urlunparse(self.purl)}")
+        LOG.debug(f"Connected to server {urlunparse(self.purl)}")
 
         # Subscribe to mining notifications
         self.send_jsonrpc("mining.subscribe", [])
-        LOG.info(f"{self.poolname}: Subscribed to pool notifications")
+        LOG.debug(f"{self.poolname}: Subscribed to pool notifications")
 
         # Authorize with the pool
         self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
-        LOG.info(f"{self.poolname}: Authed with the pool")
+        LOG.debug(f"{self.poolname}: Authed with the pool")
 
         # Wait for notifications
         while True:
@@ -127,8 +135,9 @@ class Watcher(Process):
                 n = self.get_msg()
             except Exception as e:
                 LOG.info(f"Received exception for {self.purl.hostname}: {e}")
-                break
-            LOG.info(f"Received notification: {n}")
+                self.close()
+                return
+            LOG.debug(f"Received notification: {n}")
 
             # Check the notification for mining.notify
             if "method" in n and n["method"] == "mining.notify":
@@ -154,7 +163,15 @@ class Watcher(Process):
                 coinbase_part1 = n["params"][2]
                 coinbase_part2 = n["params"][3]
                 merkle_branches = n["params"][4]
-                
+
+                coinbase = None
+                height = 0
+                try:
+                    coinbase = network.Tx.from_hex(coinbase_part1 + self.extranonce1 + "00"*self.extranonce2_length + coinbase_part2)
+                    height = int.from_bytes(coinbase.txs_in[0].script[1:4], byteorder='little')
+                except Exception as e:
+                    print(e)
+
                 nBits = n["params"][6]
                 nTime = n["params"][7]
                 clear_jobs = n["params"][8]
@@ -171,22 +188,25 @@ class Watcher(Process):
                         "prev": prev_bh,
                         "coinbase1": coinbase_part1,
                         "coinbase2": coinbase_part2,
+                        "coinbase": coinbase,
+                        "extranonce1": self.extranonce1,
+                        "extranonce2_length": self.extranonce2_length,
+                        "coinbase_out": 0 if coinbase == None else coinbase.total_out(),
+                        "height": height,
                         "bits": nBits,
                         "time": nTime,
                         "clear_jobs": clear_jobs, 
-                        "branches": merkle_branches
+                        "branches": merkle_branches,
+                        "conn_time": self.socket_open_time,
                     }
                 )
                 
     def run(self):
-        # If there is a socket exception, retry
-        while True:
-            try:
-                self.get_stratum_work()
-            except (ConnectionRefusedError, EOFError, socket.timeout):
-                pass
+        try:
+            self.get_stratum_work()
+        except (ConnectionRefusedError, EOFError, socket.timeout):
             self.close()
-            self.init_socket()
+            pass
 
 
 if __name__ == "__main__":
@@ -202,7 +222,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Set logging level
-    loglevel = logging.DEBUG if args.debug else logging.INFO
+    loglevel = logging.DEBUG# if args.debug else logging.INFO
     LOG.setLevel(loglevel)
 
     # Set the log file
