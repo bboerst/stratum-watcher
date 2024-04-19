@@ -26,14 +26,14 @@ LOG.setLevel(logging.INFO)
 
 
 class Watcher(Process):
-    def __init__(self, url, userpass, *args, **kwargs):
+    def __init__(self, poolname, url, userpass, pipe_send, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.buf = b""
-        self.id = 0
+        self.id = 1
+        self.poolname = poolname
         self.userpass = userpass
-        self.signals = None
         self.last_log_time = time.time()
-
+        self.pipe_send = pipe_send
         # Parse the URL
         self.purl = urlparse(url)
         if self.purl.scheme != "stratum+tcp":
@@ -60,14 +60,14 @@ class Watcher(Process):
         except OSError:
             pass
         self.sock.close()
-        LOG.debug(f"Disconnected from {urlunparse(self.purl)}")
+        LOG.info(f"Disconnected from {urlunparse(self.purl)}")
 
     def get_msg(self):
         while True:
             split_buf = self.buf.split(b"\n", maxsplit=1)
             r = split_buf[0]
             try:
-                #print(r)
+                print(self.poolname, self.buf.decode())
                 resp = json.loads(r)
                 # Remove r from the buffer
                 if len(split_buf) == 2:
@@ -92,7 +92,7 @@ class Watcher(Process):
     def send_jsonrpc(self, method, params):
         # Build the jsonrpc request
         data = {
-            "jsonrpc": "2.0",
+            #"jsonrpc": "2.0",
             "id": self.id,
             "method": method,
             "params": params,
@@ -100,35 +100,35 @@ class Watcher(Process):
         self.id += 1
 
         # Send the jsonrpc request
-        LOG.debug(f"Sending: {data}")
+        LOG.info(f"Sending: {data}")
         json_data = json.dumps(data) + "\n"
         self.sock.send(json_data.encode())
 
         # Get the jsonrpc reqponse
         resp = self.get_msg()
-        LOG.debug(f"Received: {resp}")
+        LOG.info(f"Received: {resp}")
 
     def get_stratum_work(self):
         # Open TCP connection to the server
         self.sock.connect((self.purl.hostname, self.purl.port))
-        LOG.debug(f"Connected to server {urlunparse(self.purl)}")
+        LOG.info(f"Connected to server {urlunparse(self.purl)}")
 
         # Subscribe to mining notifications
-        self.send_jsonrpc("mining.subscribe", ["StratumWatcher/0.1"])
-        LOG.debug(f"Subscribed to pool notifications")
+        self.send_jsonrpc("mining.subscribe", [])
+        LOG.info(f"{self.poolname}: Subscribed to pool notifications")
 
         # Authorize with the pool
         self.send_jsonrpc("mining.authorize", self.userpass.split(":"))
-        LOG.debug(f"Authed with the pool")
+        LOG.info(f"{self.poolname}: Authed with the pool")
 
         # Wait for notifications
         while True:
             try:
                 n = self.get_msg()
             except Exception as e:
-                LOG.debug(f"Received exception for {self.purl.hostname}: {e}")
+                LOG.info(f"Received exception for {self.purl.hostname}: {e}")
                 break
-            LOG.debug(f"Received notification: {n}")
+            LOG.info(f"Received notification: {n}")
 
             # Check the notification for mining.notify
             if "method" in n and n["method"] == "mining.notify":
@@ -153,13 +153,30 @@ class Watcher(Process):
                 )
                 coinbase_part1 = n["params"][2]
                 coinbase_part2 = n["params"][3]
-                merkle_leaves = n["params"][4]
+                merkle_branches = n["params"][4]
                 
                 nBits = n["params"][6]
                 nTime = n["params"][7]
                 clear_jobs = n["params"][8]
-                LOG.info(f"New work from {self.purl.hostname: >25}:{self.purl.port: <5} {len(merkle_leaves)} {hash(tuple(merkle_leaves))}")
-                
+                txid = "empty block"
+                if len(merkle_branches) > 0:
+                    txid = bytes(reversed(bytes.fromhex(merkle_branches[0]))).hex()
+                self.pipe_send.send(
+                    {
+                        "name": self.poolname,
+                        "timestamp": time.time(),
+                        "hostname": self.purl.hostname,
+                        "port": self.purl.port,
+                        "first_tx": txid,
+                        "prev": prev_bh,
+                        "coinbase1": coinbase_part1,
+                        "coinbase2": coinbase_part2,
+                        "bits": nBits,
+                        "time": nTime,
+                        "clear_jobs": clear_jobs, 
+                        "branches": merkle_branches
+                    }
+                )
                 
     def run(self):
         # If there is a socket exception, retry
