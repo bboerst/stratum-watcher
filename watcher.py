@@ -20,11 +20,11 @@ from pycoin.symbols.btc import network
 file_handler = logging.FileHandler(filename="stratum-watcher.log")
 stdout_handler = logging.StreamHandler(sys.stdout)
 logging.basicConfig(
-    handlers=[file_handler, stdout_handler],
+    handlers=[file_handler],
     format="%(asctime)s %(levelname)s: %(message)s",
 )
 LOG = logging.getLogger()
-LOG.setLevel(logging.INFO)
+LOG.setLevel(logging.DEBUG)
 
 
 class Watcher(Process):
@@ -118,6 +118,7 @@ class Watcher(Process):
 
     def get_stratum_work(self):
         # Open TCP connection to the server
+        self.sock.setblocking(True)
         self.sock.connect((self.purl.hostname, self.purl.port))
         LOG.debug(f"Connected to server {urlunparse(self.purl)}")
 
@@ -134,10 +135,10 @@ class Watcher(Process):
             try:
                 n = self.get_msg()
             except Exception as e:
-                LOG.info(f"Received exception for {self.purl.hostname}: {e}")
+                LOG.info(f"Received exception from {self.purl.hostname}: {e}")
                 self.close()
                 return
-            LOG.debug(f"Received notification: {n}")
+            LOG.debug(f"Received notification from [{self.poolname}]: {n}")
 
             # Check the notification for mining.notify
             if "method" in n and n["method"] == "mining.notify":
